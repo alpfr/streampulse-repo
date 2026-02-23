@@ -45,6 +45,12 @@ export async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_weekly_date ON weekly_data(date);
   `);
 
+  // Migrations for existing databases
+  try { db.exec("ALTER TABLE weekly_data ADD COLUMN platforms TEXT DEFAULT '{}'"); } catch (e) { }
+  try { db.exec("ALTER TABLE weekly_data ADD COLUMN total INTEGER DEFAULT 0"); } catch (e) { }
+  try { db.exec("ALTER TABLE special_event_data ADD COLUMN platforms TEXT DEFAULT '{}'"); } catch (e) { }
+  try { db.exec("ALTER TABLE special_event_data ADD COLUMN total INTEGER DEFAULT 0"); } catch (e) { }
+
   return db;
 }
 
