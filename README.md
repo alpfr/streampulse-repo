@@ -180,3 +180,7 @@ SQLite file at `data/streampulse.db`. Back up by copying this single file.
 ## Supported Platforms
 
 StreamPulse Analytics is completely dynamic. It will read whatever platform columns you put in your CSV (e.g., YouTube, Twitch, TikTok, Boxcast, PT Online Viewers) and automatically build the database schema and UI to track them.
+
+## Compliance
+
+For information regarding the roadmap and requirements for achieving SOC 2 Compliance (Type II) with StreamPulse Analytics, please refer to the [SOC 2 Compliance Guide](SOC2_COMPLIANCE.md).
