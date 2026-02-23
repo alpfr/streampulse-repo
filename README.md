@@ -1,6 +1,6 @@
-# JHB StreamPulse Dashboard v2.1
+# StreamPulse Analytics
 
-Streaming analytics dashboard for Jesus House Baltimore with SQLite backend, CSV upload/export, admin authentication, and AI-powered insights via Claude.
+A dynamic, zero-configuration streaming analytics dashboard with a local SQLite backend, generic CSV parsing, admin authentication, and AI-powered insights via Claude.
 
 ## Quick Start (Mac)
 
@@ -89,7 +89,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
    - **Replace All** — clears database, imports fresh
 5. Click Upload
 
-The parser automatically handles the JHB multi-service side-by-side CSV format.
+The parser automatically scans the top rows of your CSV to discover services, streams, and platforms dynamically. No hardcoded column formats are required.
 
 ## CSV Export
 
@@ -114,10 +114,24 @@ Click **Export CSV** to download all current data as a flat CSV file.
 | POST | `/api/insights/generate` | Generate new AI insight (requires admin) |
 | DELETE | `/api/data/:service` | Delete service data (requires admin) |
 
-## Docker Deployment
+## AWS EKS Production Deployment
+
+StreamPulse Analytics is packaged as a multi-architecture Docker container (`linux/amd64`, `linux/arm64`) and can be seamlessly deployed to AWS Elastic Kubernetes Service (EKS).
 
 ```bash
-# Build and run
+# Apply the Kubernetes manifests
+kubectl apply -f k8s.yaml
+```
+
+The production EKS deployment features:
+- **Persistent Data:** Uses an AWS EBS `gp2` StorageClass PVC to preserve the SQLite database across pod restarts.
+- **AWS Cognito Auth:** Fully integrated with AWS Application Load Balancer (ALB) Ingress to enforce AWS Cognito user authentication before allowing access to the dashboard.
+- **Secrets Management:** Secures the `ANTHROPIC_API_KEY` and `ADMIN_PIN` via native Kubernetes Secrets.
+
+## Local Docker Deployment
+
+```bash
+# Build and run locally
 docker compose up -d
 
 # With custom admin PIN and AI enabled
@@ -156,17 +170,13 @@ SQLite file at `data/streampulse.db`. Back up by copying this single file.
 
 ### Tables
 
-- **weekly_data** — Weekly viewer counts per service/platform
-- **special_events** — Event metadata (14 DOG, Solution Night, etc.)
-- **special_event_data** — Daily viewer counts for events
+- **config** — Dynamic UI configuration, service definitions, colors, and parsed platform lists
+- **weekly_data** — Weekly viewer counts per service (stores platforms automatically as JSON)
+- **special_events** — Discovered event metadata
+- **special_event_data** — Daily viewer counts for events (stores platforms automatically as JSON)
 - **upload_history** — CSV upload audit log
 - **ai_insights** — AI-generated analysis history
 
-## Services Tracked
+## Supported Platforms
 
-| Service | Platforms |
-|---------|-----------|
-| Insights with PT | YouTube, Facebook, X, Instagram, PT's YouTube |
-| JHB Services | YouTube, Facebook, X, Instagram, Telegram, Emerge, BoxCast |
-| JHB Charlotte | YouTube, Facebook, X, Instagram, Telegram |
-| Bible Study | YouTube, Facebook, X, Instagram, Telegram, Zoom, BoxCast |
+StreamPulse Analytics is completely dynamic. It will read whatever platform columns you put in your CSV (e.g., YouTube, Twitch, TikTok, Boxcast, PT Online Viewers) and automatically build the database schema and UI to track them.
