@@ -171,15 +171,15 @@ export function parseCSV(csvText) {
     // Read platform rows below
     let j = i + 1;
     const platformRows = [];
-    while (j < specialStart && j < i + 12) {
+    while (j < specialStart && j < i + 30) {
       const prow = rows[j];
       const allEmpty = labelCols.every(
         (c) => !prow[c] || prow[c].trim() === ""
       );
-      const isTotal =
-        (prow[labelCols[0]] || "").trim() === "" &&
-        prow.some((val, c) => !labelCols.includes(c) && parseVal(val) > 0);
-      if (isTotal || (allEmpty && j > i + 1)) break;
+      const isExplicitTotal = labelCols.some(c => (prow[c] || "").toLowerCase().includes("total"));
+      const isImplicitTotal = allEmpty && prow.some((val, c) => !labelCols.includes(c) && parseVal(val) > 0);
+
+      if (isExplicitTotal || isImplicitTotal || (allEmpty && j > i + 1)) break;
       platformRows.push(prow);
       j++;
     }
@@ -246,9 +246,9 @@ export function parseCSV(csvText) {
   // Helper: parse platform data from rows below a header
   function parsePlatformBlock(startRow, numDateCols) {
     const pdata = {};
-    for (let k = startRow; k < Math.min(startRow + 8, rows.length); k++) {
+    for (let k = startRow; k < Math.min(startRow + 30, rows.length); k++) {
       const pname = rows[k][0].trim();
-      if (pname && !pname.includes("Total")) {
+      if (pname && !pname.toLowerCase().includes("total")) {
         const pk = makeSlug(pname);
         pdata[pk] = [];
         for (let c = 1; c <= numDateCols; c++) {
