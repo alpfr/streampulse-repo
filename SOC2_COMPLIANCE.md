@@ -2,17 +2,17 @@
 
 Achieving SOC 2 compliance (specifically Type II) is a significant undertaking that verifies the security, availability, processing integrity, confidentiality, and privacy of the application’s operational environment over time.
 
-While StreamPulse Analytics is currently a lightweight Node.js + SQLite application running on AWS EKS, there are specific architectural and operational changes required to achieve SOC 2 compliance.
+While StreamPulse Analytics is currently a lightweight Node.js + PostgreSQL application running on AWS EKS, there are specific architectural and operational changes required to achieve full SOC 2 compliance.
 
 ## 1. Database & Storage Architecture (RDS Migration)
 
-While SQLite is fast and provides zero-configuration deployments, it presents significant challenges for SOC 2 compliance. 
-* **Requirement:** Migrate from the local SQLite file (`data/streampulse.db`) to a managed database like **Amazon RDS (PostgreSQL or MySQL)**. 
-* **Why:** SOC 2 requires strict **separation of duties**, **point-in-time recovery (PITR)**, **automated backups**, **encryption at rest using KMS**, and **detailed database audit logging** (who accessed what data and when). AWS RDS provides this out-of-the-box. Achieving verifiable audit trails on a local SQLite file inside a Kubernetes pod is not sufficient for compliance.
+While we have successfully migrated from a local SQLite file to a robust PostgreSQL database running within the EKS cluster, there are still challenges for SOC 2 compliance. 
+* **Requirement:** Migrate the in-cluster PostgreSQL deployment to a fully managed database like **Amazon RDS (PostgreSQL)**. 
+* **Why:** SOC 2 requires strict **separation of duties**, **point-in-time recovery (PITR)**, **automated backups**, **encryption at rest using KMS**, and **detailed database audit logging** (who accessed what data and when). AWS RDS provides this out-of-the-box. Achieving verifiable audit trails on a self-managed database inside a Kubernetes pod is not sufficient for compliance.
 
 ## 2. Access Control & Authentication (Security)
 
-The application currently sits securely behind an AWS Application Load Balancer integrated with AWS Cognito. To meet SOC 2 requirements:
+The application currently sits securely behind an AWS Application Load Balancer integrated natively with AWS Cognito mappings for Admin/Editor roles. To meet SOC 2 requirements:
 * **MFA Enablement:** Multi-Factor Authentication (MFA) must be strictly enforced for all administrative users in the AWS Cognito User Pool.
 * **Role-Based Access Control (RBAC):** The application relies on an "Admin PIN" equivalent (JWT-based). We must transition to assigning distinct, defined roles (e.g., Viewer, Editor, SuperAdmin) to users within Cognito and enforce these permissions at the API layer.
 * **Infrastructure Access:** Direct access to the AWS EKS cluster via `kubectl` must be strictly limited to authorized personnel, fully logged via AWS CloudTrail, and restricted by AWS IAM policies.
@@ -48,4 +48,4 @@ A large portion of SOC 2 compliance is non-technical. The organization must docu
 ---
 
 ### Recommended First Target
-If SOC 2 compliance becomes a prioritized requirement, the highest technical priority is **migrating the local SQLite database to Amazon RDS**. This singular architectural change addresses the most rigorous compliance requirements regarding data durability, encryption, and auditability.
+If SOC 2 compliance becomes a prioritized requirement, the highest technical priority is **migrating the in-cluster PostgreSQL database to a fully managed Amazon RDS equivalent**. This singular architectural change addresses the most rigorous compliance requirements regarding data durability, encryption, and auditability.

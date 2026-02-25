@@ -150,7 +150,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 
 ```
 ├── server.js          # Express API server + AI insights engine
-├── db.js              # SQLite database (sql.js)
+├── db.js              # PostgreSQL database connection pool
 ├── csv-parser.js      # JHB CSV format parser
 ├── seed.js            # Database seeder
 ├── src/
