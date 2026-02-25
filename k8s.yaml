@@ -38,3 +38,40 @@ spec:
               optional: true
 ---
 
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: jhb-streampulse
+spec:
+  ports:
+  - port: 5432
+  selector:
+    app: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: jhb-streampulse
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: streamuser
+        - name: POSTGRES_PASSWORD
+          value: streampass
+        - name: POSTGRES_DB
+          value: streamdb
