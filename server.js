@@ -52,19 +52,39 @@ const upload = multer({
 });
 
 /* ── Auth middleware ─────────────────────────────────────────────────── */
-function requireAdmin(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or invalid authorization header" });
-  }
+function requireRole(allowedRoles) {
+  return (req, res, next) => {
+    const oidcHeader = req.headers['x-amzn-oidc-data'];
+    const mockRole = process.env.MOCK_AUTH_ROLE;
 
-  const token = authHeader.split(" ")[1];
-  try {
-    jwt.verify(token, JWT_SECRET);
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
-  }
+    let userRole = 'viewer';
+    let userEmail = 'anonymous';
+
+    if (oidcHeader) {
+      try {
+        const payload = Buffer.from(oidcHeader.split('.')[1], 'base64').toString('utf-8');
+        const claims = JSON.parse(payload);
+
+        if (claims.email) userEmail = claims.email;
+        if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
+          userRole = claims['cognito:groups'][0].toLowerCase();
+        }
+      } catch (err) {
+        console.error("Failed to parse ALB OIDC header:", err.message);
+      }
+    } else if (mockRole) {
+      userRole = mockRole.toLowerCase();
+      userEmail = `mock-${userRole}@example.com`;
+    }
+
+    req.user = { email: userEmail, role: userRole };
+
+    if (allowedRoles.includes(userRole)) {
+      next();
+    } else {
+      return res.status(403).json({ error: `Forbidden. Requires one of: ${allowedRoles.join(', ')}` });
+    }
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -72,11 +92,11 @@ function requireAdmin(req, res, next) {
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── GET /api/data — All weekly data + special events ───────────────── */
-app.get("/api/data", (_req, res) => {
+app.get("/api/data", async (_req, res) => {
   try {
-    const data = getWeeklyData();
-    const events = getSpecialEvents();
-    const config = getConfig("services") || [];
+    const data = await getWeeklyData();
+    const events = await getSpecialEvents();
+    const config = await getConfig("services") || [];
     res.json({ data, events, config });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -84,7 +104,7 @@ app.get("/api/data", (_req, res) => {
 });
 
 /* ── POST /api/data — Manual entry (add/update individual rows) ─────── */
-app.post("/api/data", requireAdmin, (req, res) => {
+app.post("/api/data", requireRole(["admin", "editor"]), async (req, res) => {
   try {
     const { entries } = req.body;
     if (!entries || !Array.isArray(entries)) {
@@ -97,7 +117,7 @@ app.post("/api/data", requireAdmin, (req, res) => {
       platforms: e.platforms || {},
       total: e.total || 0,
     }));
-    const result = upsertWeeklyBatch(rows);
+    const result = await upsertWeeklyBatch(rows);
     res.json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -105,9 +125,9 @@ app.post("/api/data", requireAdmin, (req, res) => {
 });
 
 /* ── GET /api/data/:service — Weekly data for one service ───────────── */
-app.get("/api/data/:service", (req, res) => {
+app.get("/api/data/:service", async (req, res) => {
   try {
-    const rows = getWeeklyByService(req.params.service);
+    const rows = await getWeeklyByService(req.params.service);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -115,9 +135,9 @@ app.get("/api/data/:service", (req, res) => {
 });
 
 /* ── GET /api/special-events — All special events ───────────────────── */
-app.get("/api/special-events", (_req, res) => {
+app.get("/api/special-events", async (_req, res) => {
   try {
-    const events = getSpecialEvents();
+    const events = await getSpecialEvents();
     res.json(events);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -125,10 +145,10 @@ app.get("/api/special-events", (_req, res) => {
 });
 
 /* ── GET /api/stats — Summary statistics ────────────────────────────── */
-app.get("/api/stats", (_req, res) => {
+app.get("/api/stats", async (_req, res) => {
   try {
-    const stats = getStats();
-    const history = getUploadHistory();
+    const stats = await getStats();
+    const history = await getUploadHistory();
     res.json({ ...stats, lastUpload: history[0] || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -136,27 +156,42 @@ app.get("/api/stats", (_req, res) => {
 });
 
 /* ── GET /api/uploads — Upload history ──────────────────────────────── */
-app.get("/api/uploads", (_req, res) => {
+app.get("/api/uploads", async (_req, res) => {
   try {
-    res.json(getUploadHistory());
+    const history = await getUploadHistory();
+    res.json(history);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-/* ── POST /api/auth — Verify admin PIN ──────────────────────────────── */
-app.post("/api/auth", (req, res) => {
-  const { pin } = req.body;
-  if (pin === ADMIN_PIN) {
-    const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "30m" });
-    res.json({ success: true, token, timeout: 30 * 60 * 1000 });
-  } else {
-    res.status(401).json({ error: "Invalid PIN" });
+/* ── GET /api/auth/me — Decode ALB JWT and return user role ─────────── */
+app.get("/api/auth/me", (req, res) => {
+  const oidcHeader = req.headers['x-amzn-oidc-data'];
+  const mockRole = process.env.MOCK_AUTH_ROLE;
+
+  let role = 'viewer';
+  let email = 'anonymous';
+
+  if (oidcHeader) {
+    try {
+      const payload = Buffer.from(oidcHeader.split('.')[1], 'base64').toString('utf-8');
+      const claims = JSON.parse(payload);
+      if (claims.email) email = claims.email;
+      if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
+        role = claims['cognito:groups'][0].toLowerCase();
+      }
+    } catch (err) { }
+  } else if (mockRole) {
+    role = mockRole.toLowerCase();
+    email = `mock-${role}@example.com`;
   }
+
+  res.json({ email, role });
 });
 
 /* ── POST /api/upload — CSV upload (replace/append) ─────────────────── */
-app.post("/api/upload", requireAdmin, upload.single("csv"), (req, res) => {
+app.post("/api/upload", requireRole(["admin", "editor"]), upload.single("csv"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No CSV file provided" });
 
@@ -178,25 +213,25 @@ app.post("/api/upload", requireAdmin, upload.single("csv"), (req, res) => {
 
     let result;
     if (mode === "replace") {
-      result = replaceAllWeekly(allRows);
+      result = await replaceAllWeekly(allRows);
       if (parsed.specialEvents.length > 0) {
-        replaceAllEvents(parsed.specialEvents);
+        await replaceAllEvents(parsed.specialEvents);
       }
     } else {
       // append/merge — upsert (update existing, add new)
-      result = upsertWeeklyBatch(allRows);
+      result = await upsertWeeklyBatch(allRows);
       for (const ev of parsed.specialEvents) {
-        upsertSpecialEvent(ev);
+        await upsertSpecialEvent(ev);
       }
     }
 
     // Save the dynamic config
     if (parsed.config && parsed.config.length > 0) {
-      setConfig("services", parsed.config);
+      await setConfig("services", parsed.config);
     }
 
     // Log the upload
-    logUpload({
+    await logUpload({
       filename: req.file.originalname,
       mode,
       rows_added: result.added,
@@ -231,11 +266,11 @@ app.post("/api/upload", requireAdmin, upload.single("csv"), (req, res) => {
 });
 
 /* ── GET /api/export — Export current data as CSV ───────────────────── */
-app.get("/api/export", (_req, res) => {
+app.get("/api/export", async (_req, res) => {
   try {
-    const data = getWeeklyData();
+    const data = await getWeeklyData();
     const services = Object.keys(data);
-    const config = getConfig("services") || [];
+    const config = await getConfig("services") || [];
 
     // Find all possible platforms from config to build headers
     const platformCols = new Set();
@@ -272,9 +307,9 @@ app.get("/api/export", (_req, res) => {
 });
 
 /* ── DELETE /api/data/:service — Delete one service's data ──────────── */
-app.delete("/api/data/:service", requireAdmin, (req, res) => {
+app.delete("/api/data/:service", requireRole(["admin"]), async (req, res) => {
   try {
-    deleteServiceData(req.params.service);
+    await deleteServiceData(req.params.service);
     res.json({ success: true, deleted: req.params.service });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -295,6 +330,16 @@ function buildInsightsPrompt(data, events, config) {
 
   let prompt = `You are an analytics assistant. Analyze the following streaming viewer data across multiple services and platforms, and provide insights.\n\n`;
 
+  // Map raw platform IDs to human-readable names
+  const platformNames = {};
+  for (const c of config) {
+    if (c.platforms) {
+      for (const p of c.platforms) {
+        platformNames[p.id] = p.name;
+      }
+    }
+  }
+
   for (const svc of services) {
     const rows = data[svc] || [];
     if (!rows.length) continue;
@@ -310,10 +355,13 @@ function buildInsightsPrompt(data, events, config) {
     prompt += `Total: ${total.toLocaleString()} | Avg: ${avg}/week | Latest: ${latest.total} (${change}% vs prior)\n`;
     prompt += `Last 8 weeks: ${recent.map(r => r.total).join(", ")}\n`;
 
-    // Dynamic platform breakdowns
+    // Dynamic platform breakdowns using real names
     let pBreakdown = [];
     for (const [p, val] of Object.entries(latest.platforms || {})) {
-      pBreakdown.push(`${p}=${val}`);
+      let pName = platformNames[p] || p.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      if (p === 'pt_s_youtube') pName = "PT's YouTube";
+      else if (p === 'x_formerly_twitter') pName = "X (Twitter)";
+      pBreakdown.push(`${pName}=${val}`);
     }
     prompt += `Latest breakdown: ${pBreakdown.join(", ")}\n\n`;
   }
@@ -323,6 +371,19 @@ function buildInsightsPrompt(data, events, config) {
     for (const ev of events) {
       const evTotal = ev.data.reduce((s, d) => s + d.total, 0);
       prompt += `- ${ev.name}: ${evTotal.toLocaleString()} viewers (${ev.data.length} sessions) — ${ev.dates}\n`;
+
+      // Include platform breakdowns for recent special events
+      if (ev.data.length > 0) {
+        const latestEv = ev.data[ev.data.length - 1];
+        let pBreakdown = [];
+        for (const [p, val] of Object.entries(latestEv.platforms || {})) {
+          let pName = platformNames[p] || p.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          if (p === 'pt_s_youtube') pName = "PT's YouTube";
+          else if (p === 'x_formerly_twitter') pName = "X (Twitter)";
+          pBreakdown.push(`${pName}=${val}`);
+        }
+        prompt += `  Breakdown: ${pBreakdown.join(", ")}\n`;
+      }
     }
     prompt += `\n`;
   }
@@ -350,10 +411,10 @@ async function generateInsights(triggerType = "manual") {
     throw new Error("ANTHROPIC_API_KEY not set. Add it to your environment variables.");
   }
 
-  const data = getWeeklyData();
-  const events = getSpecialEvents();
+  const data = await getWeeklyData();
+  const events = await getSpecialEvents();
 
-  const config = getConfig("services") || [];
+  const config = await getConfig("services") || [];
   const prompt = buildInsightsPrompt(data, events, config);
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -397,7 +458,7 @@ async function generateInsights(triggerType = "manual") {
     .join("");
 
   // Parse the JSON response
-  const cleaned = text.replace(/```json|```/g, "").trim();
+  const cleaned = text.replace(/\`\`\`json|\`\`\`/g, "").trim();
   let parsed;
   try {
     parsed = JSON.parse(cleaned);
@@ -407,7 +468,7 @@ async function generateInsights(triggerType = "manual") {
   }
 
   // Save to database
-  saveInsight({
+  await saveInsight({
     trigger_type: triggerType,
     summary: JSON.stringify(parsed),
     highlights: JSON.stringify(parsed.highlights || []),
@@ -420,9 +481,9 @@ async function generateInsights(triggerType = "manual") {
 }
 
 /* ── GET /api/insights — Get latest AI insight ─────────────────────── */
-app.get("/api/insights", (_req, res) => {
+app.get("/api/insights", async (_req, res) => {
   try {
-    const insight = getLatestInsight();
+    const insight = await getLatestInsight();
     if (!insight) return res.json({ available: false, configured: !!ANTHROPIC_API_KEY });
 
     let parsed;
@@ -441,16 +502,17 @@ app.get("/api/insights", (_req, res) => {
 });
 
 /* ── GET /api/insights/history — Insight history ───────────────────── */
-app.get("/api/insights/history", (_req, res) => {
+app.get("/api/insights/history", async (_req, res) => {
   try {
-    res.json(getInsightHistory());
+    const history = await getInsightHistory();
+    res.json(history);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 /* ── POST /api/insights/generate — Generate new insight ────────────── */
-app.post("/api/insights/generate", requireAdmin, async (_req, res) => {
+app.post("/api/insights/generate", requireRole(["admin", "editor"]), async (_req, res) => {
   try {
     const insight = await generateInsights("manual");
     res.json({ success: true, ...insight });
@@ -461,11 +523,16 @@ app.post("/api/insights/generate", requireAdmin, async (_req, res) => {
 });
 
 /* ── GET /api/insights/status — Check if API key is configured ─────── */
-app.get("/api/insights/status", (_req, res) => {
-  res.json({
-    configured: !!ANTHROPIC_API_KEY,
-    hasInsights: !!getLatestInsight(),
-  });
+app.get("/api/insights/status", async (_req, res) => {
+  try {
+    const latest = await getLatestInsight();
+    res.json({
+      configured: !!ANTHROPIC_API_KEY,
+      hasInsights: !!latest,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 /* ═══════════════════════════════════════════════════════════════════════

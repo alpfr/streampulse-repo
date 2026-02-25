@@ -13,41 +13,46 @@ import {
 } from "./db.js";
 import { parseCSV } from "./csv-parser.js";
 
-await initDB();
+async function main() {
+  const pool = await initDB();
 
-const csvPath = process.argv[2];
+  const csvPath = process.argv[2];
 
-if (csvPath && existsSync(csvPath)) {
-  console.log(`\nImporting CSV: ${csvPath}`);
-  const csvText = readFileSync(csvPath, "utf-8");
-  const parsed = parseCSV(csvText);
+  if (csvPath && existsSync(csvPath)) {
+    console.log(`\nImporting CSV: ${csvPath}`);
+    const csvText = readFileSync(csvPath, "utf-8");
+    const parsed = parseCSV(csvText);
 
-  const allRows = [];
-  for (const [svc, entries] of Object.entries(parsed.services)) {
-    for (const entry of entries) allRows.push({ ...entry, service: svc });
+    const allRows = [];
+    for (const [svc, entries] of Object.entries(parsed.services)) {
+      for (const entry of entries) allRows.push({ ...entry, service: svc });
+    }
+
+    const result = await upsertWeeklyBatch(allRows);
+    console.log(`  Weekly: ${result.added} added, ${result.updated} updated`);
+
+    for (const ev of parsed.specialEvents) {
+      await upsertSpecialEvent(ev);
+      console.log(`  Event: ${ev.name} (${ev.data.length} entries)`);
+    }
+  } else {
+    console.log("\nSeeding with built-in 2025 + 2026 data...");
+    await seedBuiltinData();
   }
 
-  const result = upsertWeeklyBatch(allRows);
-  console.log(`  Weekly: ${result.added} added, ${result.updated} updated`);
+  const stats = await getStats();
+  console.log(`\nDatabase now contains:`);
+  console.log(`  Weekly data rows:  ${stats.weeklyRows}`);
+  console.log(`  Special events:    ${stats.specialEvents}`);
+  console.log(`  DB file: Postgres Database\n`);
 
-  for (const ev of parsed.specialEvents) {
-    upsertSpecialEvent(ev);
-    console.log(`  Event: ${ev.name} (${ev.data.length} entries)`);
-  }
-} else {
-  console.log("\nSeeding with built-in 2025 + 2026 data...");
-  seedBuiltinData();
+  // Close the pg pool
+  await pool.end();
 }
-
-const stats = getStats();
-console.log(`\nDatabase now contains:`);
-console.log(`  Weekly data rows:  ${stats.weeklyRows}`);
-console.log(`  Special events:    ${stats.specialEvents}`);
-console.log(`  DB file: ./data/streampulse.db\n`);
 
 /* ═══════════════════════════════════════════════════════════════════════ */
 
-function seedBuiltinData() {
+async function seedBuiltinData() {
   // 2026 data (generic placeholder data)
   const data2026 = {
     stream_a: [
@@ -93,11 +98,11 @@ function seedBuiltinData() {
     }
   }
 
-  const result = upsertWeeklyBatch(rows2026);
+  const result = await upsertWeeklyBatch(rows2026);
   console.log(`  2026 weekly: ${result.added} added`);
 
   for (const ev of specialEvents2026) {
-    upsertSpecialEvent(ev);
+    await upsertSpecialEvent(ev);
     console.log(`  2026 event: ${ev.name}`);
   }
 
@@ -122,6 +127,8 @@ function seedBuiltinData() {
       ]
     }
   ];
-  setConfig("SERVICES", config);
+  await setConfig("SERVICES", config);
   console.log(`  2026 config generated`);
 }
+
+main().catch(console.error);

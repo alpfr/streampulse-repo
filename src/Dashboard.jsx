@@ -15,7 +15,6 @@ import { fmt, pct, fmtDateNice, getWeekNumber } from "./utils/helpers";
 import { StatCard } from "./components/UI/StatCard";
 import { NotifPanel } from "./components/UI/NotifPanel";
 import { EntryModal } from "./components/Modals/EntryModal";
-import { AdminLoginModal } from "./components/Modals/AdminLoginModal";
 import { UploadModal } from "./components/Modals/UploadModal";
 import { InsightsPanel } from "./components/Modals/InsightsPanel";
 import { AboutModal } from "./components/Modals/AboutModal";
@@ -38,10 +37,7 @@ export default function StreamPulse() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [showDateFilter, setShowDateFilter] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
-  const [adminTimer, setAdminTimer] = useState(null);
-  const [adminToken, setAdminToken] = useState("");
+  const [user, setUser] = useState({ email: "anonymous", role: "viewer" });
   const [showUpload, setShowUpload] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -99,7 +95,19 @@ ${insights.recommendation || "N/A"}`;
     }
   };
 
-  useEffect(() => { loadData(); loadInsights(); }, []);
+  const checkAuth = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`);
+      if (res.ok) {
+        const data = await res.json();
+        setUser(data);
+      }
+    } catch (err) {
+      console.error("Auth check failed:", err);
+    }
+  };
+
+  useEffect(() => { checkAuth(); loadData(); loadInsights(); }, []);
 
   // Load existing AI insights
   const loadInsights = async () => {
@@ -126,7 +134,7 @@ ${insights.recommendation || "N/A"}`;
     try {
       const res = await fetch(`${API_BASE}/insights/generate`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${adminToken}` },
+        headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
         const err = await res.json();
@@ -140,27 +148,6 @@ ${insights.recommendation || "N/A"}`;
     } finally {
       setInsightsLoading(false);
     }
-  };
-
-  // Auto-logout admin after timeout
-  useEffect(() => {
-    if (isAdmin) {
-      const timer = setTimeout(() => { setIsAdmin(false); setAdminToken(""); }, 30 * 60 * 1000);
-      setAdminTimer(timer);
-      return () => clearTimeout(timer);
-    }
-  }, [isAdmin]);
-
-  const handleAdminLogin = (pin, timeout) => {
-    setIsAdmin(true);
-    setAdminToken(pin);
-  };
-
-  const handleAdminLogout = () => {
-    setIsAdmin(false);
-    setAdminToken("");
-    if (adminTimer) clearTimeout(adminTimer);
-    setShowEntry(false);
   };
 
   const service = activeService ? config.find(s => s.id === activeService) : null;
@@ -250,11 +237,30 @@ ${insights.recommendation || "N/A"}`;
 
   const grandTotal = config.reduce((s, svc) => s + (data[svc.id] || []).reduce((ss, e) => ss + (e.total || 0), 0), 0);
 
+  const totalFiltered = filtered.reduce((s, d) => s + (d.total || 0), 0);
+  const avgWeekly = filtered.length > 0 ? Math.round(totalFiltered / filtered.length) : 0;
+
+  const monthlyTotals = {};
+  const quarterlyTotals = {};
+  filtered.forEach(d => {
+    monthlyTotals[d.month] = (monthlyTotals[d.month] || 0) + (d.total || 0);
+    const [yyyy, mm] = d.month.split('-');
+    const q = Math.ceil(parseInt(mm, 10) / 3);
+    const qKey = `${yyyy}-Q${q}`;
+    quarterlyTotals[qKey] = (quarterlyTotals[qKey] || 0) + (d.total || 0);
+  });
+
+  const numMonths = Object.keys(monthlyTotals).length;
+  const avgMonthly = numMonths > 0 ? Math.round(totalFiltered / numMonths) : 0;
+
+  const numQuarters = Object.keys(quarterlyTotals).length;
+  const avgQuarterly = numQuarters > 0 ? Math.round(totalFiltered / numQuarters) : 0;
+
   const addEntry = async (entry) => {
     try {
       const res = await fetch(`${API_BASE}/data`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${adminToken}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries: [{ ...entry, service: activeService }] }),
       });
       if (!res.ok) throw new Error("Failed to save");
@@ -306,6 +312,9 @@ ${insights.recommendation || "N/A"}`;
     );
   };
 
+  const C = chartType === "bar" ? BarChart : chartType === "line" ? LineChart : AreaChart;
+  const D = chartType === "bar" ? Bar : chartType === "line" ? Line : Area;
+
   return (
     <div style={{ minHeight: "100vh", background: "#0c0c1d", color: "#fff", fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
@@ -331,7 +340,7 @@ ${insights.recommendation || "N/A"}`;
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search platforms..."
               style={{ padding: "7px 10px 7px 28px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, color: "#fff", fontSize: 11, outline: "none", width: 140 }} />
           </div>
-          {isAdmin ? (
+          {["admin", "editor"].includes(user.role) ? (
             <>
               {service && (
                 <button onClick={() => setShowEntry(true)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: "none", background: `linear-gradient(135deg, ${service.gradient[0]}, ${service.gradient[1]})`, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
@@ -344,22 +353,20 @@ ${insights.recommendation || "N/A"}`;
               <button onClick={() => window.open(`${API_BASE}/export`, '_blank')} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(52,211,153,0.2)", background: "rgba(52,211,153,0.06)", color: "#34D399", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                 <Download size={12} /> Export
               </button>
-              <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "5px 10px", borderRadius: 7, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 7, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)" }}>
                 <Shield size={11} color="#34D399" />
-                <span style={{ fontSize: 10, fontWeight: 600, color: "#34D399" }}>Admin</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: "#34D399", textTransform: "capitalize" }}>{user.role}</span>
               </div>
-              <button onClick={handleAdminLogout} title="Logout admin" style={{ background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.15)", borderRadius: 8, padding: 7, cursor: "pointer", color: "#F87171", display: "flex", alignItems: "center" }}>
-                <LogOut size={14} />
-              </button>
             </>
           ) : (
             <>
               <button onClick={() => window.open(`${API_BASE}/export`, '_blank')} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(52,211,153,0.15)", background: "rgba(52,211,153,0.04)", color: "rgba(52,211,153,0.6)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
                 <Download size={12} /> Export
               </button>
-              <button onClick={() => setShowAdminLogin(true)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
-                <Lock size={12} /> Add Data
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 7, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <Lock size={11} color="rgba(255,255,255,0.5)" />
+                <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.5)", textTransform: "capitalize" }}>{user.role}</span>
+              </div>
             </>
           )}
           <button onClick={() => setShowInsights(true)} title="AI Insights" style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 8, border: insights?.available ? "1px solid rgba(139,92,246,0.3)" : "1px solid rgba(255,255,255,0.08)", background: insights?.available ? "rgba(139,92,246,0.08)" : "rgba(255,255,255,0.04)", color: insights?.available ? "#A78BFA" : "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
@@ -514,6 +521,9 @@ ${insights.recommendation || "N/A"}`;
             <StatCard label="Peak Viewers" value={fmt(Math.max(...filtered.map(d => d.total || 0), 0))} change={null} color="#F59E0B" sub="Best in range" />
             <StatCard label="Top Platform" value={service.platforms.reduce((best, p) => ((latest.platforms?.[p.id] || 0) > (latest.platforms?.[best.id] || 0) ? p : best), service.platforms[0])?.name || "–"} change={null} color="#EC4899" sub={`${fmt(Math.max(...service.platforms.map(p => latest.platforms?.[p.id] || 0), 0))} viewers`} />
             <StatCard label="Grand Total (All)" value={fmt(grandTotal)} change={null} color="#6366F1" sub="All services" />
+            <StatCard label="Weekly Avg" value={fmt(avgWeekly)} change={null} color="#10B981" sub="Over range" />
+            <StatCard label="Monthly Avg" value={fmt(avgMonthly)} change={null} color="#3B82F6" sub="Over range" />
+            <StatCard label="Quarterly Avg" value={fmt(avgQuarterly)} change={null} color="#8B5CF6" sub="Over range" />
           </div>
         )}
 
@@ -641,13 +651,13 @@ ${insights.recommendation || "N/A"}`;
                 {filtered.length > 0 && <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.3)", fontSize: 10, marginLeft: 8 }}>Wk {getWeekNumber(filtered[0].date)}–{getWeekNumber(filtered[filtered.length - 1].date)}</span>}
               </h3>
               <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={filtered}>
+                <C data={filtered} margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                   <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickFormatter={v => v?.slice(5)} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
                   <YAxis tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickFormatter={fmt} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
                   <Tooltip contentStyle={{ background: "#1a1a30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 11, color: "#fff" }} formatter={v => [fmt(v), "Total"]} />
-                  <Area type="monotone" dataKey="total" stroke={service.color} fill={`${service.color}20`} strokeWidth={2.5} dot />
-                </AreaChart>
+                  <D type="monotone" dataKey="total" stroke={service.color} fill={chartType === "area" ? `${service.color}20` : service.color} strokeWidth={2.5} dot={chartType !== "bar"} radius={chartType === "bar" ? [3, 3, 0, 0] : undefined} connectNulls />
+                </C>
               </ResponsiveContainer>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
@@ -661,10 +671,10 @@ ${insights.recommendation || "N/A"}`;
                     </div>
                     {has ? (
                       <ResponsiveContainer width="100%" height={110}>
-                        <AreaChart data={filtered}>
-                          <Area type="monotone" dataKey={row => row.platforms?.[p.id] || 0} stroke={p.color} fill={`${p.color}15`} strokeWidth={2} dot={false} connectNulls />
+                        <C data={filtered} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                          <D type="monotone" dataKey={row => row.platforms?.[p.id] || 0} stroke={p.color} fill={chartType === "area" ? `${p.color}15` : p.color} strokeWidth={2} dot={false} radius={chartType === "bar" ? [2, 2, 0, 0] : undefined} connectNulls />
                           <Tooltip contentStyle={{ background: "#1a1a30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 11, color: "#fff" }} formatter={v => [fmt(v), p.name]} />
-                        </AreaChart>
+                        </C>
                       </ResponsiveContainer>
                     ) : <div style={{ height: 110, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.12)", fontSize: 11 }}>No data</div>}
                   </div>
@@ -751,7 +761,7 @@ ${insights.recommendation || "N/A"}`;
                   <YAxis tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickFormatter={fmt} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
                   <Tooltip contentStyle={{ background: "#1a1a30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 11, color: "#fff" }} formatter={v => [fmt(v), ""]} />
                   <Legend wrapperStyle={{ fontSize: 10 }} />
-                  {config.map(svc => <Bar key={svc.id} dataKey={svc.id} name={svc.short} fill={svc.color} radius={[4, 4, 0, 0]} />)}
+                  {config.map(svc => <Bar key={svc.id} dataKey={svc.id} name={svc.short} fill={`${svc.color}D0`} stroke={svc.color} strokeWidth={1} radius={[2, 2, 0, 0]} />)}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -780,23 +790,24 @@ ${insights.recommendation || "N/A"}`;
             </div>
             {specialEvents.length > 0 && (
               <div style={card}>
-                <h3 style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>Special Events</h3>
-                {specialEvents.map((evt, i) => (
-                  <div key={i} style={{ marginBottom: 14 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "#F59E0B" }}>{evt.name}</span>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>{evt.dates}</span>
+                <h3 style={{ margin: "0 0 16px", fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.7)" }}>Special Events</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+                  {specialEvents.map((evt, i) => (
+                    <div key={i} style={{ padding: 16, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: "#F59E0B" }}>{evt.name}</span>
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>{evt.dates}</span>
+                      </div>
+                      <ResponsiveContainer width="100%" height={120}>
+                        <BarChart data={evt.data}>
+                          <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 9 }} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
+                          <Tooltip contentStyle={{ background: "#1a1a30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 11, color: "#fff" }} cursor={{ fill: 'rgba(255,255,255,0.04)' }} formatter={v => [fmt(v), "Total"]} />
+                          <Bar dataKey="total" fill="#F59E0B" fillOpacity={0.85} radius={[3, 3, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                    <ResponsiveContainer width="100%" height={160}>
-                      <BarChart data={evt.data}>
-                        <XAxis dataKey="date" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
-                        <YAxis tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} tickFormatter={fmt} axisLine={{ stroke: "rgba(255,255,255,0.06)" }} />
-                        <Tooltip contentStyle={{ background: "#1a1a30", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, fontSize: 11, color: "#fff" }} formatter={v => [fmt(v), ""]} />
-                        <Bar dataKey="total" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -843,21 +854,20 @@ ${insights.recommendation || "N/A"}`;
         <div style={{ marginTop: 24, padding: "12px 0", borderTop: "1px solid rgba(255,255,255,0.04)", display: "flex", justifyContent: "center", alignItems: "center", gap: 8, fontSize: 9, color: "rgba(255,255,255,0.15)" }}>
           <span>StreamPulse Analytics · {config.reduce((s, svc) => s + (data[svc.id] || []).length, 0)} entries across {config.length} services</span>
           <span style={{ width: 3, height: 3, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
-          <span style={{ display: "flex", alignItems: "center", gap: 3, color: isAdmin ? "#34D399" : "rgba(255,255,255,0.15)" }}>
-            {isAdmin ? <><Shield size={8} /> Admin Mode</> : <><Lock size={8} /> View Only</>}
+          <span style={{ display: "flex", alignItems: "center", gap: 3, color: ["admin", "editor"].includes(user.role) ? "#34D399" : "rgba(255,255,255,0.15)" }}>
+            {["admin", "editor"].includes(user.role) ? <><Shield size={8} /> <span style={{ textTransform: "capitalize" }}>{user.role} Mode</span></> : <><Lock size={8} /> View Only</>}
           </span>
         </div>
       </div>
 
-      {showEntry && isAdmin && service && <EntryModal onClose={() => setShowEntry(false)} onSubmit={addEntry} service={service} />}
-      {showAdminLogin && <AdminLoginModal onClose={() => setShowAdminLogin(false)} onSuccess={handleAdminLogin} color={service?.color || "#6366F1"} gradient={service?.gradient || ["#6366F1", "#4F46E5"]} />}
-      {showUpload && isAdmin && <UploadModal onClose={() => setShowUpload(false)} adminToken={adminToken} onUploadComplete={() => { loadData(); setTimeout(loadInsights, 5000); }} color={service?.color || "#6366F1"} gradient={service?.gradient || ["#6366F1", "#4F46E5"]} />}
+      {showEntry && ["admin", "editor"].includes(user.role) && service && <EntryModal onClose={() => setShowEntry(false)} onSubmit={addEntry} service={service} />}
+      {showUpload && ["admin", "editor"].includes(user.role) && <UploadModal onClose={() => setShowUpload(false)} onUploadComplete={() => { loadData(); setTimeout(loadInsights, 5000); }} color={service?.color || "#6366F1"} gradient={service?.gradient || ["#6366F1", "#4F46E5"]} />}
       {showAbout && <AboutModal onClose={() => setShowAbout(false)} config={config} />}
       {showInsights && <InsightsPanel
         insights={insights}
         onClose={() => { setShowInsights(false); setInsightsError(null); }}
         onGenerate={generateInsights}
-        isAdmin={isAdmin}
+        isAdmin={["admin", "editor"].includes(user.role)}
         isLoading={insightsLoading}
         error={insightsError}
       />}

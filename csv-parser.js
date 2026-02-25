@@ -45,8 +45,9 @@ function buildConfig(services) {
     }
 
     const platforms = Array.from(platSet).map(pId => {
-      // Very basic formatting for display name
-      const name = pId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      let name = pId.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+      if (pId === 'pt_s_youtube') name = "PT's YouTube";
+      else if (pId === 'x_formerly_twitter') name = "X (Twitter)";
       return { id: pId, name, color: "#888888", icon: "▶" };
     });
 

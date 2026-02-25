@@ -1,6 +1,6 @@
 # StreamPulse Analytics
 
-A dynamic, zero-configuration streaming analytics dashboard with a local SQLite backend, generic CSV parsing, admin authentication, and AI-powered insights via Claude.
+A dynamic, zero-configuration streaming analytics dashboard with a PostgreSQL backend, generic CSV parsing, AWS IAM Role-Based Access Control (RBAC) via OIDC, and AI-powered insights via Claude.
 
 ## Quick Start (Mac)
 
@@ -31,10 +31,10 @@ node server.js
 
 ## Zero-Config & Data Privacy
 
-StreamPulse is built for maximum data privacy and zero configuration overhead:
-- **100% Local Storage:** All analytics data is stored in a lightweight, blazing-fast SQLite database (`data/streampulse.db`). No cloud subscriptions or heavy database servers (Postgres/MySQL) are required.
+StreamPulse is built for maximum data privacy and low configuration overhead:
+- **Scalable Storage:** All analytics data is stored natively in PostgreSQL. No local file attachments are required.
 - **Total Data Ownership:** Your church's data never leaves your internal network unless you explicitly provide an `ANTHROPIC_API_KEY` to enable the Claude AI Insights feature.
-- **Simple Backups:** Backing up your entire historical analytics database simply involves copying the `data/streampulse.db` file.
+- **Role-Based Access:** StreamPulse natively reads Application Load Balancer `x-amzn-oidc-data` headers to map IAM/Cognito roles securely to Viewer, Editor, or Admin profiles without custom login passwords.
 
 ## AI Insights (Powered by Claude)
 
@@ -81,8 +81,8 @@ ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 
 ## CSV Upload
 
-1. Log in as admin (default PIN: `1234`)
-2. Click the **Upload** button in the header
+1. Make sure you are authenticated with an IAM Role of `editor` or `admin`.
+2. Click the **Upload CSV** button in the header
 3. Drag & drop your CSV file or click to browse
 4. Choose mode:
    - **Merge/Append** — adds new weeks, updates existing ones
@@ -108,10 +108,9 @@ Click **Export CSV** to download all current data as a flat CSV file.
 | GET | `/api/insights` | Latest AI insight |
 | GET | `/api/insights/status` | AI configuration status |
 | GET | `/api/insights/history` | Past insight summaries |
-| POST | `/api/auth` | Verify admin PIN |
-| POST | `/api/upload` | Upload CSV (requires admin) |
-| POST | `/api/data` | Manual entry (requires admin) |
-| POST | `/api/insights/generate` | Generate new AI insight (requires admin) |
+| POST | `/api/upload` | Upload CSV (requires editor/admin) |
+| POST | `/api/data` | Manual entry (requires editor/admin) |
+| POST | `/api/insights/generate` | Generate new AI insight (requires editor/admin) |
 | DELETE | `/api/data/:service` | Delete service data (requires admin) |
 
 ## AWS EKS Production Deployment
@@ -124,9 +123,9 @@ kubectl apply -f k8s.yaml
 ```
 
 The production EKS deployment features:
-- **Persistent Data:** Uses an AWS EBS `gp2` StorageClass PVC to preserve the SQLite database across pod restarts.
+- **PostgreSQL Database:** Handled externally via AWS RDS to ensure scalable and durable analytics data storage.
 - **AWS Cognito Auth:** Fully integrated with AWS Application Load Balancer (ALB) Ingress to enforce AWS Cognito user authentication before allowing access to the dashboard.
-- **Secrets Management:** Secures the `ANTHROPIC_API_KEY` and `ADMIN_PIN` via native Kubernetes Secrets.
+- **Secrets Management:** Secures the `ANTHROPIC_API_KEY` and `DATABASE_URL` via native Kubernetes Secrets.
 
 ## Local Docker Deployment
 
@@ -134,8 +133,8 @@ The production EKS deployment features:
 # Build and run locally
 docker compose up -d
 
-# With custom admin PIN and AI enabled
-ADMIN_PIN=5678 ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
+# With AI enabled
+ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 ```
 
 ## Environment Variables
@@ -143,7 +142,8 @@ ADMIN_PIN=5678 ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8000` | Server port |
-| `ADMIN_PIN` | `1234` | Admin authentication PIN |
+| `MOCK_AUTH_ROLE` | *(none)* | For local testing of IAM bypass (`admin`, `editor`, `viewer`) |
+| `DATABASE_URL` | *(none)* | PostgreSQL Connection String |
 | `ANTHROPIC_API_KEY` | *(none)* | Claude API key for AI Insights (optional) |
 
 ## Project Structure
@@ -157,8 +157,6 @@ ADMIN_PIN=5678 ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 │   ├── Dashboard.jsx  # React dashboard + AI insights panel
 │   └── main.jsx       # Entry point
 ├── public/            # Built frontend
-├── data/
-│   └── streampulse.db # SQLite database file
 ├── start.command      # Mac launcher
 ├── Dockerfile         # Container build
 └── docker-compose.yml # Docker deployment
@@ -166,7 +164,7 @@ ADMIN_PIN=5678 ANTHROPIC_API_KEY=sk-ant-api03-your-key docker compose up -d
 
 ## Database
 
-SQLite file at `data/streampulse.db`. Back up by copying this single file.
+PostgreSQL relational tables map to your unique streaming environment.
 
 ### Tables
 

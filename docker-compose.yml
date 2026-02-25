@@ -6,11 +6,26 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=8000
-      - ADMIN_PIN=${ADMIN_PIN:-1234}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DATABASE_URL=postgres://streamuser:streampass@postgres:5432/streamdb
+      - MOCK_AUTH_ROLE=admin
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    ports:
+      - "15432:5432"
+    environment:
+      - POSTGRES_USER=streamuser
+      - POSTGRES_PASSWORD=streampass
+      - POSTGRES_DB=streamdb
     volumes:
-      - streampulse-data:/app/data    # Persist SQLite database
+      - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
 
 volumes:
-  streampulse-data:
+  postgres-data:
+
+

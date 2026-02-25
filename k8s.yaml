@@ -25,24 +25,16 @@ spec:
           value: "8000"
         - name: NODE_ENV
           value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: streampulse-secrets
+              key: DATABASE_URL
         - name: ANTHROPIC_API_KEY
           valueFrom:
             secretKeyRef:
               name: streampulse-secrets
               key: ANTHROPIC_API_KEY
               optional: true
-        - name: ADMIN_PIN
-          valueFrom:
-            secretKeyRef:
-              name: streampulse-secrets
-              key: ADMIN_PIN
-              optional: true
-        volumeMounts:
-        - name: data-volume
-          mountPath: /app/data
-      volumes:
-      - name: data-volume
-        persistentVolumeClaim:
-          claimName: jhb-streampulse-data
 ---
 
