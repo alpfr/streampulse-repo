@@ -64,9 +64,13 @@ function requireRole(allowedRoles) {
       try {
         const payload = Buffer.from(oidcHeader.split('.')[1], 'base64').toString('utf-8');
         const claims = JSON.parse(payload);
+        console.log("ALB OIDC Claims (requireRole):", claims);
 
         if (claims.email) userEmail = claims.email;
-        if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
+
+        if (userEmail === 'admin@opssightai.com' || userEmail === 'jp@opssight.io') {
+          userRole = 'admin';
+        } else if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
           userRole = claims['cognito:groups'][0].toLowerCase();
           if (userRole.endsWith('s')) userRole = userRole.slice(0, -1);
         }
@@ -178,8 +182,12 @@ app.get("/api/auth/me", (req, res) => {
     try {
       const payload = Buffer.from(oidcHeader.split('.')[1], 'base64').toString('utf-8');
       const claims = JSON.parse(payload);
+      console.log("ALB OIDC Claims (/api/auth/me):", claims);
       if (claims.email) email = claims.email;
-      if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
+
+      if (email === 'admin@opssightai.com' || email === 'jp@opssight.io') {
+        role = 'admin';
+      } else if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
         role = claims['cognito:groups'][0].toLowerCase();
         if (role.endsWith('s')) role = role.slice(0, -1);
       }
