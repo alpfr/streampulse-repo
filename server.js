@@ -68,6 +68,7 @@ function requireRole(allowedRoles) {
         if (claims.email) userEmail = claims.email;
         if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
           userRole = claims['cognito:groups'][0].toLowerCase();
+          if (userRole.endsWith('s')) userRole = userRole.slice(0, -1);
         }
       } catch (err) {
         console.error("Failed to parse ALB OIDC header:", err.message);
@@ -180,6 +181,7 @@ app.get("/api/auth/me", (req, res) => {
       if (claims.email) email = claims.email;
       if (claims['cognito:groups'] && claims['cognito:groups'].length > 0) {
         role = claims['cognito:groups'][0].toLowerCase();
+        if (role.endsWith('s')) role = role.slice(0, -1);
       }
     } catch (err) { }
   } else if (mockRole) {
