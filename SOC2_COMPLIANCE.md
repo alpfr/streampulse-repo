@@ -10,31 +10,30 @@ While we have successfully migrated from a local SQLite file to a robust Postgre
 * **Requirement:** Migrate the in-cluster PostgreSQL deployment to a fully managed database like **Amazon RDS (PostgreSQL)**. 
 * **Why:** SOC 2 requires strict **separation of duties**, **point-in-time recovery (PITR)**, **automated backups**, **encryption at rest using KMS**, and **detailed database audit logging** (who accessed what data and when). AWS RDS provides this out-of-the-box. Achieving verifiable audit trails on a self-managed database inside a Kubernetes pod is not sufficient for compliance.
 
-## 2. Access Control & Authentication (Security)
+## 1. Network & Infrastructure Security (Confidentiality)
 
-The application currently sits securely behind an AWS Application Load Balancer integrated natively with AWS Cognito mappings for Admin/Editor roles. To meet SOC 2 requirements:
-* **MFA Enablement:** Multi-Factor Authentication (MFA) must be strictly enforced for all administrative users in the AWS Cognito User Pool.
-* **Role-Based Access Control (RBAC):** The application relies on an "Admin PIN" equivalent (JWT-based). We must transition to assigning distinct, defined roles (e.g., Viewer, Editor, SuperAdmin) to users within Cognito and enforce these permissions at the API layer.
-* **Infrastructure Access:** Direct access to the AWS EKS cluster via `kubectl` must be strictly limited to authorized personnel, fully logged via AWS CloudTrail, and restricted by AWS IAM policies.
+* **Web Application Firewall (WAF):** Your EKS Application Load Balancer is currently strictly `internet-facing`. AWS WAF must be attached to the ALB to automatically block common vulnerabilities (OWASP Top 10, SQL injection, cross-site scripting) and mitigate DDoS attacks.
+* **Encrypted Internal Traffic (mTLS):** While your ALB terminates HTTPS securely over the public internet, the internal cluster network traffic (the connection between your Node.js pod and your PostgreSQL pod) is currently unencrypted. SOC 2 requires end-to-end encryption. You should either implement a Service Mesh (like Istio/Linkerd) for mTLS or configure the PostgreSQL container to enforce SSL connections natively.
 
-## 3. Comprehensive Audit Logging (Processing Integrity)
+## 2. High Availability & Disaster Recovery (Availability)
 
-Currently, the application logs high-level upload metadata to an `upload_history` table. SOC 2 requires centralized, immutable logging:
-* **Application Logging:** Every sensitive action (login success/failure, data deletion, data export) must be logged with the User ID, Timestamp, IP Address, and the exact Action taken.
-* **Centralization:** Logs should be streamed directly out of EKS pods into a secure, immutable log store like **Amazon CloudWatch Logs** or Datadog, ensuring developers and admins cannot alter or delete them.
+*   **Database Persistence (Intermediate Step):** Right now, your PostgreSQL database is running as a bare deployment inside the Kubernetes cluster. If the physical AWS EC2 node holding that pod dies, your database is destroyed. *Before* you even migrate to a managed AWS RDS database, you must implement a Kubernetes **Persistent Volume Claim (PVC)** backed by an encrypted AWS Elastic Block Store (EBS) volume so the data survives pod restarts.
+*   **Deployment Replicas:** The StreamPulse backend `deployment.yaml` should be locked to enforce a minimum of `2` or `3` replicas with Pod Anti-Affinity rules (so AWS guarantees the pods run on physically different server racks/Availability Zones). 
 
-## 4. Continuous Monitoring & Vulnerability Management
+## 3. Advanced Secrets Management (Security)
 
-* **Container Scanning:** The Docker image stored in AWS ECR must be automatically scanned for known CVEs (Common Vulnerabilities and Exposures) before deployment ("Scan on Push").
-* **Dependency Scanning:** CI/CD tooling (e.g., `npm audit`, Snyk, or GitHub Dependabot) must be enabled on the repository to prevent the introduction of compromised Node.js packages.
-* **Uptime Monitoring:** External monitoring systems (like AWS Route 53 Health Checks or Datadog) must be configured to alert the team immediately if the application goes offline (Availability criteria).
+*   **Kubernetes Etcd Encryption:** Right now, your `ANTHROPIC_API_KEY` and `DATABASE_URL` are stored as Kubernetes Secrets. By default, Kubernetes stores these as base64-encoded strings (plaintext) inside its underlying `etcd` database. You must configure your EKS cluster with an **AWS KMS provider** to encrypt the `etcd` volume at rest.
+*   **External Secrets Management:** For ISO 27001 compliance, it would be much stronger to utilize the **AWS Secrets Manager / EKS integration**. Instead of storing secrets natively in Kubernetes, the pod securely mounts the secrets from AWS at runtime using IAM Service Roles. 
 
-## 5. Infrastructure as Code (IaC) & Change Management
+## 4. Comprehensive Observability (Processing Integrity)
 
-SOC 2 dictates that organizations must prove *how* changes make it into production. 
-* Manual deployments (e.g., running `kubectl apply` from a laptop) are not permitted. 
-* We must establish a formal CI/CD pipeline (e.g., GitHub Actions or AWS CodePipeline) requiring peer code reviews, automated testing, and automated deployment. 
-* AWS infrastructure (VPCs, EKS Cluster, ALB, RDS) should be defined completely in Terraform or AWS CloudFormation, ensuring all infrastructure changes are tracked in version control.
+*   **Application Logging:** Every sensitive action (login success/failure, data deletion, data export) must be logged securely. The StreamPulse Node.js application currently outputs raw console text logs. To pass a SOC 2 audit, application logs should be strictly formatted as **JSON**. This allows a Security Information and Event Management (SIEM) tool like Splunk or Datadog to natively ingest the logs.
+*   **EKS Control Plane Logging:** You must explicitly enable "Audit" and "Authenticator" logging on your AWS EKS cluster settings. This streams raw telemetry to AWS CloudWatch, proving to auditors exactly who executed `kubectl` commands against your cluster.
+
+## 5. Shift-Left Security & CI/CD (Change Management)
+
+*   **ECR Image Scanning:** In AWS Elastic Container Registry (ECR), you must toggle **"Scan on Push"**. This utilizes AWS Inspector to automatically scan your `jhb-streampulse:latest` Docker image against global CVE (vulnerability) databases every time you build it.
+*   **Automated Pipeline Blocks:** Your repository must enforce Branch Protection Rules requiring peer review (Pull Requests) and implement a CI/CD pipeline (GitHub Actions). The pipeline should run automated tests and container scans that block merging if a "High" or "Critical" vulnerability is detected. 
 
 ## 6. Organizational Policies & Procedures
 
